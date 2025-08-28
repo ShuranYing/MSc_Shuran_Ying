@@ -1,0 +1,833 @@
+---
+title: '03 Descriptive Analysis'
+subtitle: ""
+output:
+  bookdown::pdf_book:
+    keep_tex: yes
+  bookdown::html_document2:
+    toc: yes
+    toc_float: yes
+    highlight: tango
+  html_document:
+    toc: yes
+    df_print: paged
+link-citations: true
+
+---
+
+<style type="text/css">
+h1{
+  font-size: 24pt;
+}
+h2{
+  font-size: 18pt;
+}
+body{
+  font-size: 12pt;
+}
+</style>
+
+```{r setup, include = FALSE, tidy=TRUE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+include_solutions <- TRUE
+```
+```{r setup2, include=FALSE, tidy=TRUE}
+library(here)
+library(ggplot2)
+library(dplyr)
+library(geobr)
+library(ggsci)
+library(lubridate)
+library(tidyr)
+library(sf)
+library(stringi)
+library(ggcorrplot)
+library(patchwork)
+library(readr)
+library(terra)
+library(tidyverse)
+library(readxl)
+library(purrr)
+```
+
+```{r data, echo=FALSE}
+# Load data
+gisaid_data_B <- read.csv(here("01_Data", "02_Clean_Data", "Brazil_GISAID_all.csv"))
+capacity_summary_B <- read.csv(here("01_Data", "02_Clean_Data", "Brazil_capacity_summary.csv"))
+```
+
+Figure \@ref(fig:SequencingIntensityNational) shows that Dengue sequencing has sharply increased in recent years, while Chikungunya and Zika show earlier peaks with limited recent sequencing activity.
+
+```{r SequencingIntensityNational, echo=FALSE, fig.cap="National-level sequencing trends for three arboviruses in Brazil between 2015 and 2025. The plot shows the annual number of genomes sequences submitted to GISAID for Dengue, Zika and Chikungunya."}
+national_summary <- capacity_summary_B %>%
+  mutate(Year = factor(Year)) %>%
+  filter(!is.na(N_sequences)) %>%
+  group_by(Year, Virus) %>%
+  summarise(
+    total_sequences = sum(N_sequences, na.rm = TRUE),
+    .groups = "drop"
+  )
+a <- ggplot(national_summary, aes(x = Year, y = total_sequences, color = Virus, group = Virus)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  scale_color_npg() +
+  labs(title = "National Sequencing Trends by Virus",
+       y = "Number of Sequences",
+       x = "Year") +
+  theme_minimal(base_size = 12)
+a
+ggsave("SequencingIntensityNational.pdf", width = 16, height = 10)
+```
+
+Figure \@ref(fig:SequencingIntensityState) indicates that sequencing intensity varied substantially across Brazilian states and over time. States such as Sao Paulo demonstrated sustained sequencing activity, while many states submitted few or no genomes in most years. The disparity across regions and time reflects both differences in public health infrastructure and unequal allocation of sequencing resources.
+
+```{r SequencingIntensityState, echo=FALSE, fig.cap = "Sequencing intensity of arboviruses in Brazil, stratified by state and year. Each panel displays the number of genome sequences submitted to GISAID per year, coloured by virus type (Chikungunya, Dengue, and Zika). The y-axis is fixed across panels to allow direct comparison of sequencing volume across states."}
+capacity_summary_B <- capacity_summary_B %>%
+  filter(!is.na(N_sequences), !is.na(Year), !is.na(Virus)) %>%
+  mutate(Year = factor(Year))
+
+ggplot(capacity_summary_B, aes(x = Year, y = N_sequences, fill = Virus)) +
+  geom_col(position = "dodge") +
+  scale_fill_npg() +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  facet_wrap(~ State, scales = "fixed") +
+  labs(title = "Sequencing Intensity by Year and State", y = "Number of Sequences") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 5)
+    )
+
+ggsave("SequencingIntensityState.pdf", width = 16, height = 10)
+```
+
+The distribution of turnaround time (TAT) reveals virus-specific patterns (shown in Figure \@ref(fig:TATdistribution)). Dengue shows the shortest and most consistent TAT, while Zika has the widest range and generally longer delays. Chikungunya TAT is more intermediate, with moderate variability. These differences may reflect differences in urgency, laboratory protocols, or integration with national surveillance pipelines.
+
+```{r TATdistribution, echo=FALSE, fig.cap="Distribution of turnaround time (TAT) for three arboviruses in Brazil. Each violin plot shows the range and density of sample-to-submission time (in days) for genome sequences submitted to GISAID. Median and interquartile ranges are overlaid using boxplots."}
+b <- ggplot(gisaid_data_B %>% filter(is.finite(TAT), TAT >= 0), 
+            aes(x = Virus, y = TAT, fill = Virus)) +
+  geom_violin(trim = FALSE, alpha = 0.8) +
+  geom_boxplot(width = 0.1, outlier.size = 0.5, alpha = 0.6) +
+  scale_fill_npg() +
+  labs(
+    title = "Distribution of Turnaround Time (TAT) by Virus",
+    x = "Virus",
+    y = "Turnaround Time (Days)"
+  ) +
+  theme_minimal(base_size = 12)
+
+
+b
+ggsave("TATdistribution.pdf", width = 16, height = 10)
+```
+
+In Figure \@ref(fig:TATtrend), both median and mean TAT declined over time for Dengue and Chikungunya, suggesting improvements in sequencing process and reporting. Zika shows less data with less clear trend, indicating more persistent challenges.
+
+```{r TATtrend, echo=FALSE, fig.cap="Temporal trends in turnaround time (TAT) for arbovirus genome sequencing in Brazil. The left panel shows the annual mean TAT, while the right panel displays the median TAT, both stratified by virus. These plots highlight changes in submission lag over time, reflecting differences in surveillance efficiency and sequencing delays."}
+tat_summary <- gisaid_data_B %>%
+  group_by(Year, Virus) %>%
+  summarise(
+    median_TAT = median(TAT, na.rm = TRUE),
+    mean_TAT = mean(TAT, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+tat_long <- tat_summary %>%
+  pivot_longer(cols = c(median_TAT, mean_TAT), names_to = "statistic", values_to = "TAT")
+
+ggplot(tat_long, aes(x = as.factor(Year), y = TAT, color = Virus, group = Virus)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  facet_wrap(~ statistic, ncol = 2) +
+  scale_color_npg() +
+  labs(title = "Turnaround Time (TAT) by Statistic and Virus",
+       y = "TAT (Days)", x = "Year") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(size = 6))
+
+ggsave("TATtrend.pdf", width = 16, height = 10)
+```
+
+Substantial disparities in sequencing capacity exist across states and viruses (Figure \@ref(fig:SequencingCapacityPlot)). Even after adjusting for case numbers, most states sequenced fewer than 10 genomes per 1,000 cases. Some states achieved much higher capacity in specific years. The log transformation reveals under-sequenced regions and highlights critical gaps in representativeness, especially for Zika and Chikungunya.
+
+```{r SequencingCapacityPlot, echo=FALSE, fig.cap="Log-scaled sequencing capacity (genomes per 1,000 reported cases) for arboviruses across Brazilian states and federal district and years. Each tile shows that log10-transformed sequencing capacity for a given virus  (Chikungunya, Dengue, or Zika) in a specific state-year pair. Grey tiles indicate missing or zero-capacity entries. Brighter colors (yellow) reflect higher sequencing capacity relative to case counts."}
+capacity_summary_B <- capacity_summary_B %>%
+  mutate(capacity_log10 = log10(sequencing_capacity + 1))
+
+ggplot(capacity_summary_B, aes(x = Year, y = State, fill = capacity_log10)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "C", na.value = "grey90", name = "log10(Capacity)") +
+  facet_wrap(~ Virus) +
+  labs(title = "Log-Scaled Sequencing Capacity per 1,000 Cases",
+       x = "Year", y = "State") +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(size = 5))
+
+ggsave("SequencingCapacityPlot.pdf", width = 16, height = 10)
+```
+
+Yearly maps for sequencing capacity:
+
+```{r DengueMap, echo=FALSE, fig.cap="Annual state-level distribution of sequencing capacity for dengue virus in Brazil (2015–2025). Maps are faceted by year. Grey indicates missing data; color scale from purple to yellow reflects increasing capacity."}
+# Dengue
+brazil_states <- read_state(year = 2020) %>%
+  mutate(State = tolower(stri_trans_general(name_state, "Latin-ASCII")))
+
+dengue_data <- filter(capacity_summary_B, Virus == "dengue",
+                      is.finite(sequencing_capacity), sequencing_capacity > 0)
+dengue_capacity_map_data <- dengue_data %>%
+  group_by(State, Year) %>%
+  summarise(sequencing_capacity = mean(sequencing_capacity, na.rm = TRUE), .groups = "drop") %>%
+  mutate(Year = factor(Year, levels = as.character(2015:2025))) %>% 
+  complete(State, Year)
+
+dengue_capacity_map_sf <- left_join(brazil_states, dengue_capacity_map_data, by = "State") %>%
+  filter(!is.na(Year))
+
+d <- ggplot(dengue_capacity_map_sf) +
+  geom_sf(aes(fill = sequencing_capacity), color = "white", size = 0.2) +
+  scale_fill_viridis_c(name = "Capacity") +
+  theme_minimal(base_size = 13) +
+  facet_wrap(~Year, ncol = 6) +
+  labs(title = "Yearly Average Sequencing Capacity by State (Dengue)") + 
+  theme_void() + 
+  theme(legend.position = "right")
+
+d
+```
+
+```{r ZikaMap, echo=FALSE, fig.cap="Annual state-level distribution of sequencing capacity for zika virus in Brazil (2015–2025). Maps are faceted by year. Grey indicates missing data; color scale from purple to yellow reflects increasing capacity."}
+# Dengue
+zika_data <- filter(capacity_summary_B, Virus == "zika",
+                      is.finite(sequencing_capacity), sequencing_capacity > 0)
+zika_capacity_map_data <- zika_data %>%
+  group_by(State, Year) %>%
+  summarise(sequencing_capacity = mean(sequencing_capacity, na.rm = TRUE), .groups = "drop") %>%
+  mutate(Year = factor(Year, levels = as.character(2015:2019))) %>% 
+  complete(State, Year)
+
+zika_capacity_map_sf <- left_join(brazil_states, zika_capacity_map_data, by = "State") %>%
+  filter(!is.na(Year))
+
+z <- ggplot(zika_capacity_map_sf) +
+  geom_sf(aes(fill = sequencing_capacity), color = "white", size = 0.2) +
+  scale_fill_viridis_c(name = "Capacity", na.value = "grey90") +
+  theme_minimal(base_size = 13) +
+  facet_wrap(~Year, ncol = 5) +
+  labs(title = "Yearly Average Sequencing Capacity by State (Zika)") + 
+  theme_void() + 
+  theme(legend.position = "right")
+
+z
+```
+
+```{r ChiMap, echo=FALSE, fig.cap="Annual state-level distribution of sequencing capacity for Chikunguya virus in Brazil (2015–2025). Maps are faceted by year. Grey indicates missing data; color scale from purple to yellow reflects increasing capacity."}
+# Chikungunya
+chi_data <- filter(capacity_summary_B, Virus == "chikungunya",
+                      is.finite(sequencing_capacity), sequencing_capacity > 0)
+chi_capacity_map_data <- chi_data %>%
+  group_by(State, Year) %>%
+  summarise(sequencing_capacity = mean(sequencing_capacity, na.rm = TRUE), .groups = "drop") %>%
+  mutate(Year = factor(Year, levels = as.character(2015:2025))) %>% 
+  complete(State, Year)
+
+chi_capacity_map_sf <- left_join(brazil_states, chi_capacity_map_data, by = "State") %>%
+  filter(!is.na(Year))
+
+c <- ggplot(chi_capacity_map_sf) +
+  geom_sf(aes(fill = sequencing_capacity), color = "white", size = 0.2) +
+  scale_fill_viridis_c(name = "Capacity") +
+  theme_minimal(base_size = 13) +
+  facet_wrap(~Year, ncol = 6) +
+  labs(title = "Yearly Average Sequencing Capacity by State (Chikungunya)") + 
+  theme_void() + 
+  theme(legend.position = "right")
+
+c
+```
+
+```{r data2, echo=FALSE}
+gisaid_data_B <- read.csv(here("01_Data", "02_Clean_Data", "Brazil_GISAID_all.csv"))
+capacity_summary_B <- read.csv(here("01_Data", "02_Clean_Data", "Brazil_capacity_summary.csv"))
+gisaid_data_B <- read.csv(here("01_Data", "02_Clean_Data", "Brazil_GISAID_all.csv"))
+
+tat_yearly <- gisaid_data_B %>%
+  filter(is.finite(TAT)) %>%
+  group_by(State, Year, Virus) %>%
+  summarise(
+    TAT_mean_year = mean(TAT, na.rm = TRUE),
+    N_seq_year = n(),
+    .groups = "drop"
+  )
+
+capacity_summary_B <- capacity_summary_B %>%
+  left_join(tat_yearly, by = c("State", "Year", "Virus"))
+
+# Schooling year
+lines <- read_lines(here("01_Data", "01_Raw_Data", "schooling_year.csv"))
+clean_lines <- lines[4:32]
+schooling_year_raw <- read_csv(paste(clean_lines, collapse = "\n"), show_col_types = FALSE) %>% 
+  slice(c(2:28))
+names(schooling_year_raw)[1] <- "State"
+schooling_year_long <- schooling_year_raw %>%
+  select(State, '2016', '2017', '2018', '2019', '2022', '2023', '2024') %>%
+  mutate(across(`2016`:`2024`, as.numeric)) %>%
+  pivot_longer(-State, names_to = "Year", values_to = "schooling_year") %>%
+  mutate(
+    State = stri_trans_general(State, "Latin-ASCII"),
+    State = tolower(State),
+    Year = as.integer(Year)
+  ) %>% 
+  complete(State, Year=2015:2025)
+
+schooling_spline <- schooling_year_long %>%
+  group_by(State) %>%
+  arrange(Year) %>%
+  mutate(schooling_year = as.numeric(spline(x = Year[!is.na(schooling_year)],
+                                             y = schooling_year[!is.na(schooling_year)],
+                                             xout = Year,
+                                             method = "natural")$y))
+
+# GDP per capita
+GDP_raw <- read_csv(here("01_Data", "01_Raw_Data", "PIB.csv"), skip = 1, show_col_types = FALSE)
+names(GDP_raw)[3] <- "State"
+GDP_long <- GDP_raw %>%
+  select(State, '2015', '2016', '2017', '2018', '2019', '2020', '2021') %>%
+  mutate(across(`2015`:`2021`, as.numeric)) %>%
+  pivot_longer(-State, names_to = "Year", values_to = "GDP") %>%
+  mutate(
+    State = stri_trans_general(State, "Latin-ASCII"),
+    State = tolower(State),
+    Year = as.integer(Year)
+  ) %>% 
+  complete(State, Year=2015:2025)
+
+GDP_spline <- GDP_long %>%
+  group_by(State) %>%
+  arrange(Year) %>%
+  mutate(GDP = as.numeric(spline(x = Year[!is.na(GDP)],
+                                             y = GDP[!is.na(GDP)],
+                                             xout = Year,
+                                             method = "natural")$y))
+
+lines <- read_lines(here("01_Data", "01_Raw_Data", "population.csv"))
+clean_lines <- lines[4:32]
+population <- read_csv(paste(clean_lines, collapse = "\n"), show_col_types = FALSE) %>% 
+  slice(c(2:28))
+names(population)[1] <- "State"
+population_long <- population %>%
+  select(State, '2016', '2017', '2018', '2019', '2022', '2023', '2024') %>%
+  mutate(across(`2016`:`2024`, as.numeric)) %>%
+  pivot_longer(-State, names_to = "Year", values_to = "population") %>%
+  mutate(
+    State = stri_trans_general(State, "Latin-ASCII"),
+    State = tolower(State),
+    Year = as.integer(Year)
+  ) %>% 
+  complete(State, Year=2015:2025)
+
+population_spline <- population_long %>%
+  group_by(State) %>%
+  arrange(Year) %>%
+  mutate(population = as.numeric(spline(x = Year[!is.na(population)],
+                                             y = population[!is.na(population)],
+                                             xout = Year,
+                                             method = "natural")$y))
+
+GDP_spline <- GDP_spline %>%
+  left_join(population_spline, by = c("State", "Year")) %>% 
+  mutate(
+    GDP_per_capita = GDP / population
+  )
+
+GDP_pp <- GDP_spline %>%
+  select(State, Year, GDP_per_capita)
+
+# HDI
+HDI_raw <- read_csv(here("01_Data", "01_Raw_Data", "HDI.csv"), show_col_types = FALSE)
+names(HDI_raw)[3] <- "State"
+HDI_long <- HDI_raw %>%
+  select(State, '2015', '2016', '2017', '2018', '2019', '2020', '2021') %>%
+  mutate(across(`2015`:`2021`, as.numeric)) %>%
+  pivot_longer(-State, names_to = "Year", values_to = "HDI") %>%
+  mutate(
+    State = stri_trans_general(State, "Latin-ASCII"),
+    State = tolower(State),
+    Year = as.integer(Year)
+  ) %>% 
+  complete(State, Year=2015:2025)
+
+HDI_spline <- HDI_long %>%
+  group_by(State) %>%
+  arrange(Year) %>%
+  mutate(HDI = as.numeric(spline(x = Year[!is.na(HDI)],
+                                             y = HDI[!is.na(HDI)],
+                                             xout = Year,
+                                             method = "natural")$y))
+
+capacity_summary_B <- capacity_summary_B %>%
+  left_join(schooling_spline, by = c("State", "Year")) %>%
+  left_join(GDP_pp, by = c("State", "Year")) %>%
+  left_join(HDI_spline, by = c("State", "Year"))
+
+# Transimission risk
+risk_raster <- rast(here("01_Data", "01_Raw_Data", "DCZ_riskmap_wmean_masked.tif"))
+
+brazil_states <- read_state(year = 2020)
+
+brazil_states <- brazil_states %>%
+  mutate(State = stri_trans_general(name_state, "Latin-ASCII"),
+         State = tolower(State))
+
+brazil_states <- st_transform(brazil_states, crs(risk_raster))
+
+risk_by_state <- terra::extract(risk_raster, vect(brazil_states), fun = mean, na.rm = TRUE)
+
+risk_by_state <- cbind(brazil_states$State, risk_by_state) %>%
+  rename(State = `brazil_states$State`,
+         Transmission_risk = DCZ_riskmap_wmean_masked)
+
+capacity_summary_B <- left_join(capacity_summary_B, risk_by_state, by = c("State" = "State"))
+
+capacity_summary_B <- capacity_summary_B %>%
+  mutate(
+    capacity_proxy = ifelse(cases_reported > 0,
+                                 (N_sequences / Transmission_risk),
+                                 NA)
+  )
+
+capacity_summary_B <- capacity_summary_B %>%
+  mutate(Region = case_when(
+    State %in% c("acre", "amapa", "amazonas", "para", "rondonia", "roraima", "tocantins") ~ "North",
+    State %in% c("alagoas", "bahia", "ceara", "maranhao", "paraiba", "pernambuco", "piaui", "rio grande do norte", "sergipe") ~ "Northeast",
+    State %in% c("distrito federal", "goias", "mato grosso", "mato grosso do sul") ~ "Central-West",
+    State %in% c("espirito santo", "minas gerais", "rio de janeiro", "sao paulo") ~ "Southeast",
+    State %in% c("parana", "santa catarina", "rio grande do sul") ~ "South",
+    TRUE ~ NA_character_
+  ))
+
+hospital_raw <- read_excel(here("01_Data", "01_Raw_Data", "Hospital.xls"),
+                           range = "A3:AC38")
+
+hospital_clean <- hospital_raw %>%
+  slice(5:n()) %>%
+  select(State = 1, '2015' = 21, '2016' = 22, '2017' = 23, '2018' = 24, '2019' = 25, '2020' = 26, '2021' = 27, '2022' = 28,
+         '2023' = 29) %>%
+  filter(!is.na(State), !State %in% c("Nordeste", "Sudeste", "Centro-Oeste", "Sul")) %>%
+  mutate(
+    State = stri_trans_general(State, "Latin-ASCII"),
+    State = tolower(State))
+
+hospital_long <- hospital_clean %>%
+  pivot_longer(cols = `2015`:`2023`, 
+               names_to = "Year", 
+               values_to = "hospital") %>%
+  mutate(Year = as.integer(Year),
+         State = tolower(State)) %>% 
+  complete(State, Year=2015:2025)
+
+hospital_spline <- hospital_long %>%
+  group_by(State) %>%
+  arrange(Year) %>%
+  mutate(hospital = as.numeric(spline(x = Year[!is.na(hospital)],
+                                             y = hospital[!is.na(hospital)],
+                                             xout = Year,
+                                             method = "natural")$y))
+
+capacity_summary_B <- capacity_summary_B %>%
+  left_join(hospital_spline, by = c("State", "Year"))
+
+years <- 2015:2023
+
+unemployment_func <- function(year) {
+  df <- read_excel(
+    here("01_Data", "01_Raw_Data", "unemployment.xls"),
+    sheet = as.character(year),
+    range = "A8:B65",
+    col_names = FALSE
+  )
+
+  names(df) <- c("State", "unemployment")
+
+  df_clean <- df %>%
+    filter(!is.na(State)) %>%
+    filter(!State %in% c("Nordeste", "Sudeste", "Centro-Oeste", "Sul")) %>%
+    mutate(
+      State = stri_trans_general(State, "Latin-ASCII"),
+      State = tolower(State),
+      Year = year
+    )
+    
+  df_clean <- df_clean[seq(1, nrow(df_clean), 2), ]
+
+  return(df_clean)
+}
+
+unemployment_data <- map_dfr(years, unemployment_func)
+
+unemployment_data <- unemployment_data %>%
+  mutate(Year = as.integer(Year),
+         State = tolower(State)) %>% 
+  complete(State, Year=2015:2025)
+
+unemployment_spline <- unemployment_data %>%
+  group_by(State) %>%
+  arrange(Year) %>%
+  mutate(unemployment = as.numeric(spline(x = Year[!is.na(unemployment)],
+                                             y = unemployment[!is.na(unemployment)],
+                                             xout = Year,
+                                             method = "natural")$y))
+
+capacity_summary_B <- capacity_summary_B %>%
+  left_join(unemployment_spline, by = c("State", "Year"))
+
+write_csv(capacity_summary_B, here("01_Data", "02_Clean_Data", "Model_Data.csv"))
+```
+
+Correlation analysis between outcome and covariates:
+
+```{r correlation1, echo=FALSE, fig.cap="Correlation heatmaps between sequencing capacity / turnaround time (TAT) and covariates."}
+dengue_data <- filter(capacity_summary_B, Virus == "dengue",
+                      is.finite(sequencing_capacity), sequencing_capacity > 0)
+
+eda_data <- dengue_data %>%
+  group_by(State, Year) %>%
+  summarise(across(c(sequencing_capacity, TAT_mean_year, schooling_year, GDP_per_capita, Transmission_risk, HDI, capacity_proxy, hospital, unemployment),
+                   mean, na.rm = TRUE), .groups = "drop")
+
+cor_cap <- cor(eda_data[, c("sequencing_capacity", "Transmission_risk", "schooling_year", "GDP_per_capita", "HDI", "hospital", "unemployment")],
+               use = "complete.obs")
+
+p_cap <- ggcorrplot(cor_cap,
+                    type = "lower", lab = TRUE,
+                    title = "Correlation: Sequencing Capacity vs Covariates", , lab_size = 1.5) +
+  scale_fill_viridis_c(option = "C", limits = c(-1, 1)) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 9))
+
+cor_tat <- cor(eda_data[, c("TAT_mean_year", "Transmission_risk", "schooling_year", "GDP_per_capita", "HDI", "hospital", "unemployment")],
+               use = "complete.obs")
+
+p_tat <- ggcorrplot(cor_tat,
+                    type = "lower", lab = TRUE,
+                    title = "Correlation: TAT vs Covariates", , lab_size = 1.5) +
+  scale_fill_viridis_c(option = "C", limits = c(-1, 1)) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 9))
+
+p_cap | p_tat 
+```
+
+```{r correlation2, echo=FALSE, fig.cap="Correlation heatmap among covariates only. Schooling years and GDP per capita are strongly positively correlated (r = 0.76), while both show weak correlation with transmission risk."}
+cor_cov <- cor(eda_data[, c("Transmission_risk", "schooling_year", "GDP_per_capita", "HDI", "hospital", "unemployment")],
+               use = "complete.obs")
+
+p_cov <- ggcorrplot(cor_cov,
+                    type = "upper", lab = TRUE,
+                    title = "Correlation: Covariates Only") +
+  scale_fill_viridis_c(option = "C", limits = c(-1, 1)) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 9))
+p_cov
+```
+
+The spline interpolation provides generally smooth and interpretable trends for all variables. However, for GDP-related variables after 2021, especially where both GDP and population were imputed, interpretation should be cautious.
+
+```{r imputation, echo=FALSE, fig.cap="Temporal trends (2015–2025) of key socioeconomic indicators by Brazilian state, with imputed values (red) and observed values (blue). Interpolation was performed using natural spline methods. The four panels show: (top-left) average years of schooling, (top-right) total state-level GDP (PIB), (bottom-left) population size, and (bottom-right) GDP per capita."}
+schooling_tagged <- schooling_year_long %>%
+  mutate(source = ifelse(is.na(schooling_year), "imputed", "observed")) %>%
+  group_by(State) %>%
+  arrange(Year) %>%
+  mutate(schooling_spline = as.numeric(spline(x = Year[!is.na(schooling_year)],
+                                              y = schooling_year[!is.na(schooling_year)],
+                                              xout = Year,
+                                              method = "natural")$y)) %>%
+  mutate(source = ifelse(is.na(schooling_year), "imputed", "observed"))
+
+GDP_tagged <- GDP_long %>%
+  mutate(source = ifelse(is.na(GDP), "imputed", "observed")) %>%
+  group_by(State) %>%
+  arrange(Year) %>%
+  mutate(GDP_spline = as.numeric(spline(x = Year[!is.na(GDP)],
+                                              y = GDP[!is.na(GDP)],
+                                              xout = Year,
+                                              method = "natural")$y)) %>%
+  mutate(source = ifelse(is.na(GDP), "imputed", "observed"))
+
+population_tagged <- population_long %>%
+  mutate(source = ifelse(is.na(population), "imputed", "observed")) %>%
+  group_by(State) %>%
+  arrange(Year) %>%
+  mutate(population_spline = as.numeric(spline(x = Year[!is.na(population)],
+                                              y = population[!is.na(population)],
+                                              xout = Year,
+                                              method = "natural")$y)) %>%
+  mutate(source = ifelse(is.na(population), "imputed", "observed"))
+
+HDI_tagged <- HDI_long %>%
+  mutate(source = ifelse(is.na(HDI), "imputed", "observed")) %>%
+  group_by(State) %>%
+  arrange(Year) %>%
+  mutate(HDI_spline = as.numeric(spline(x = Year[!is.na(HDI)],
+                                              y = HDI[!is.na(HDI)],
+                                              xout = Year,
+                                              method = "natural")$y)) %>%
+  mutate(source = ifelse(is.na(HDI), "imputed", "observed"))
+
+pl1 <- ggplot(schooling_tagged, aes(x = as.factor(Year), y = schooling_spline, group = State, color = source)) +
+  geom_line(alpha = 0.8) +
+  scale_color_npg() +
+  labs(title = "Schooling Year (2015–2025)", y = "Years of Schooling", x = "Year") +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(size = 4.5))
+
+pl2 <- ggplot(GDP_tagged, aes(x = as.factor(Year), y = GDP_spline, group = State, color = source)) +
+  geom_line(alpha = 0.7) +
+  scale_color_npg() +
+  labs(title = "GDP (2015–2025)", y = "GDP (total)", x = "Year") +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(size = 4.5))
+
+pl3 <- ggplot(population_tagged, aes(x = as.factor(Year), y = population_spline, group = State, color = source)) +
+  geom_line(alpha = 0.7) +
+  scale_color_npg() +
+  labs(title = "Population (2015–2025)", y = "Population", x = "Year") +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(size = 4.5))
+
+pl4 <- ggplot(GDP_pp, aes(x = as.factor(Year), y = GDP_per_capita, group = State)) +
+  geom_line(alpha = 0.7) +
+  scale_color_npg(guide = "none") +
+  labs(title = "GDP per Capita (2015–2025)", y = "GDP per Capita", x = "Year") +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(size = 4.5))
+
+pl5 <- ggplot(HDI_tagged, aes(x = as.factor(Year), y = HDI_spline, group = State, color = source)) +
+  geom_line(alpha = 0.7) +
+  scale_color_npg() +
+  labs(title = "HDI (2015–2025)", y = "HDI", x = "Year") +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(size = 4.5))
+
+(pl1|pl2)/(pl3|pl4)/pl5
+```
+
+```{r TransmissionRiskMap, echo=FALSE, fig.cap="Transmission risk map for Brazil showing transmission suitability. (Brady et.al, 2024)"}
+brazil_country <- read_country(year = 2020)
+brazil_country <- vect(brazil_country)
+brazil_country <- project(brazil_country, crs(risk_raster))
+
+brazil_risk <- crop(risk_raster, brazil_country) |> mask(brazil_country) |> trim()
+
+plot(brazil_risk)
+```
+
+```{r yearmap, echo=FALSE}
+capacity_summary_B <- read.csv(here("01_Data", "02_Clean_Data", "Model_Data.csv"))
+
+brazil_states <- read_state(year = 2020) %>%
+  mutate(State = tolower(name_state),
+         State = stri_trans_general(State, "Latin-ASCII"))
+
+state_summary <- capacity_summary_B %>%
+  group_by(Virus, State) %>%
+  summarise(
+    avg_TAT = mean(TAT_mean_year, na.rm = TRUE),
+    avg_capacity = mean(sequencing_capacity, na.rm = TRUE),
+    avg_capacity_proxy = mean(capacity_proxy, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+plot_maps <- function(virus_name) {
+  virus_data <- filter(state_summary, Virus == virus_name)
+  merged_data <- left_join(brazil_states, virus_data, by = "State")
+
+  # Plot TAT
+  map_TAT <- ggplot(merged_data) +
+    geom_sf(aes(fill = avg_TAT)) +
+    scale_fill_viridis_c(option = "C", name = "Average TAT") +
+    theme_minimal(base_size = 11) +
+    theme(
+      legend.title = element_text(size = 7),
+      legend.text = element_text(size = 6),
+      plot.title = element_text(size = 8, face = "bold")) +
+    theme_void() +
+    labs(title = paste("Avg TAT –", virus_name))
+
+  # Plot sequencing capacity
+  map_CAP <- ggplot(merged_data) +
+    geom_sf(aes(fill = avg_capacity)) +
+    scale_fill_viridis_c(option = "C", name = "Avg Capacity") +
+    theme_minimal(base_size = 11) +
+    theme(
+      legend.title = element_text(size = 7),
+      legend.text = element_text(size = 6),
+      plot.title = element_text(size = 8, face = "bold")) +
+    theme_void() +
+    labs(title = paste("Avg Sequencing Capacity –", virus_name))
+  
+  # Plot sequencing capacity
+  map_CAP_proxy <- ggplot(merged_data) +
+    geom_sf(aes(fill = avg_capacity_proxy)) +
+    scale_fill_viridis_c(option = "C", name = "Avg Capacity") +
+    theme_minimal(base_size = 11) +
+    theme(
+      legend.title = element_text(size = 7),
+      legend.text = element_text(size = 6),
+      plot.title = element_text(size = 8, face = "bold")) +
+    theme_void() +
+    labs(title = paste("Avg Sequencing Capacity Proxy–", virus_name))
+
+  return(map_TAT + map_CAP + map_CAP_proxy)
+}
+
+combined_maps <- plot_maps("dengue") / plot_maps("chikungunya") / plot_maps("zika")
+
+combined_maps
+```
+
+```{r}
+dengue_data <- filter(capacity_summary_B, Virus == "dengue",
+                      is.finite(sequencing_capacity), sequencing_capacity > 0)
+
+long_covs <- dengue_data %>%
+  select(State, Year, TAT_mean_year, sequencing_capacity,
+         GDP_per_capita, schooling_year, Transmission_risk, HDI, capacity_proxy) %>%
+  pivot_longer(cols = c(GDP_per_capita, schooling_year, Transmission_risk, HDI),
+               names_to = "Covariate", values_to = "Value")
+
+# TAT vs Covariates
+p_tat <- ggplot(long_covs, aes(x = Value, y = TAT_mean_year)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  facet_wrap(~ Covariate, scales = "free_x") +
+  labs(x = "Covariate Value", y = "Turnaround Time (TAT)",
+       title = "Relationship between TAT and Covariates") +
+  theme_minimal()
+
+# Capacity vs Covariates
+p_cap <- ggplot(long_covs, aes(x = Value, y = sequencing_capacity)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  facet_wrap(~ Covariate, scales = "free_x") +
+  labs(x = "Covariate Value", y = "Sequencing Capacity",
+       title = "Relationship between Sequencing Capacity and Covariates") +
+  theme_minimal()
+
+p_cap_proxy <- ggplot(long_covs, aes(x = Value, y = capacity_proxy)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  facet_wrap(~ Covariate, scales = "free_x") +
+  labs(x = "Covariate Value", y = "Sequencing Capacity Proxy",
+       title = "Relationship between Capacity Proxy and Covariates") +
+  theme_minimal()
+
+p_tat 
+p_cap 
+p_cap_proxy
+```
+
+
+```{r correlation3, echo=FALSE, fig.cap="Correlation heatmaps between sequencing capacity / turnaround time (TAT) and covariates."}
+zika_data <- filter(capacity_summary_B, Virus == "zika",
+                      is.finite(sequencing_capacity), sequencing_capacity > 0)
+
+eda_data <- zika_data %>%
+  group_by(State, Year) %>%
+  summarise(across(c(sequencing_capacity, TAT_mean_year, schooling_year, GDP_per_capita, Transmission_risk, HDI, capacity_proxy, hospital, unemployment),
+                   mean, na.rm = TRUE), .groups = "drop")
+
+cor_cap <- cor(eda_data[, c("sequencing_capacity", "Transmission_risk", "schooling_year", "GDP_per_capita", "HDI", "hospital", "unemployment")],
+               use = "complete.obs")
+
+p_cap <- ggcorrplot(cor_cap,
+                    type = "lower", lab = TRUE,
+                    title = "Correlation: Sequencing Capacity vs Covariates", , lab_size = 1.5) +
+  scale_fill_viridis_c(option = "C", limits = c(-1, 1)) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 9))
+
+cor_tat <- cor(eda_data[, c("TAT_mean_year", "Transmission_risk", "schooling_year", "GDP_per_capita", "HDI", "hospital", "unemployment")],
+               use = "complete.obs")
+
+p_tat <- ggcorrplot(cor_tat,
+                    type = "lower", lab = TRUE,
+                    title = "Correlation: TAT vs Covariates", , lab_size = 1.5) +
+  scale_fill_viridis_c(option = "C", limits = c(-1, 1)) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 9))
+
+p_cap | p_tat 
+```
+
+```{r correlation4, echo=FALSE, fig.cap="Correlation heatmap among covariates only. Schooling years and GDP per capita are strongly positively correlated (r = 0.76), while both show weak correlation with transmission risk."}
+cor_cov <- cor(eda_data[, c("Transmission_risk", "schooling_year", "GDP_per_capita", "HDI", "hospital", "unemployment")],
+               use = "complete.obs")
+
+p_cov <- ggcorrplot(cor_cov,
+                    type = "upper", lab = TRUE,
+                    title = "Correlation: Covariates Only") +
+  scale_fill_viridis_c(option = "C", limits = c(-1, 1)) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 9))
+p_cov
+```
+
+
+
+
+```{r correlation5, echo=FALSE, fig.cap="Correlation heatmaps between sequencing capacity / turnaround time (TAT) and covariates."}
+chi_data <- filter(capacity_summary_B, Virus == "chikungunya",
+                      is.finite(sequencing_capacity), sequencing_capacity > 0)
+
+eda_data <- chi_data %>%
+  group_by(State, Year) %>%
+  summarise(across(c(sequencing_capacity, TAT_mean_year, schooling_year, GDP_per_capita, Transmission_risk, HDI, capacity_proxy, hospital, unemployment),
+                   mean, na.rm = TRUE), .groups = "drop")
+
+cor_cap <- cor(eda_data[, c("sequencing_capacity", "Transmission_risk", "schooling_year", "GDP_per_capita", "HDI", "hospital", "unemployment")],
+               use = "complete.obs")
+
+p_cap <- ggcorrplot(cor_cap,
+                    type = "lower", lab = TRUE,
+                    title = "Correlation: Sequencing Capacity vs Covariates", , lab_size = 1.5) +
+  scale_fill_viridis_c(option = "C", limits = c(-1, 1)) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 9))
+
+cor_tat <- cor(eda_data[, c("TAT_mean_year", "Transmission_risk", "schooling_year", "GDP_per_capita", "HDI", "hospital", "unemployment")],
+               use = "complete.obs")
+
+p_tat <- ggcorrplot(cor_tat,
+                    type = "lower", lab = TRUE,
+                    title = "Correlation: TAT vs Covariates", , lab_size = 1.5) +
+  scale_fill_viridis_c(option = "C", limits = c(-1, 1)) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 9))
+
+p_cap | p_tat 
+```
+
+```{r correlation6, echo=FALSE, fig.cap="Correlation heatmap among covariates only. Schooling years and GDP per capita are strongly positively correlated (r = 0.76), while both show weak correlation with transmission risk."}
+cor_cov <- cor(eda_data[, c("Transmission_risk", "schooling_year", "GDP_per_capita", "HDI", "hospital", "unemployment")],
+               use = "complete.obs")
+
+p_cov <- ggcorrplot(cor_cov,
+                    type = "upper", lab = TRUE,
+                    title = "Correlation: Covariates Only") +
+  scale_fill_viridis_c(option = "C", limits = c(-1, 1)) +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 9))
+p_cov
+```
