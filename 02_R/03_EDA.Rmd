@@ -126,7 +126,6 @@ p_combined <- p_combined & theme(
   legend.position = "right",
   plot.tag = element_text(size = 16, face = "bold")
 )
-
 p_combined
 ggsave("TAT_combined.pdf", p_combined, width = 10, height = 6)
 ```
@@ -238,19 +237,10 @@ c_labeled <- c + ggtitle("(c) Chikungunya") +
 z_small <- z_labeled + theme(plot.margin = margin(0,0,0,0))
 
 combined_map <- (
-  d_labeled | plot_spacer() | c_labeled
-) /
-  (plot_spacer() | z_small | plot_spacer()) +
-  plot_layout(guides = "collect", widths = c(1, 0.0005, 1), heights = c(1, 0.7)) & 
-  theme(legend.position = "right")
-
-combined_map
-
-combined_map <- (
   d_labeled |  c_labeled
 ) /
   z_labeled +
-  plot_layout(guides = "collect", heights = c(1, 0.7)) & 
+  plot_layout(guides = "collect", heights = c(1, 0.5)) & 
   theme(legend.position = "right")
 
 combined_map
