@@ -57,6 +57,7 @@ require(tibble)
 require(knitr)
 require(kableExtra)
 require(bayesplot)
+require(posterior)
 ```
 
 ```{r data, echo=FALSE}
@@ -1715,4 +1716,47 @@ p <- ggplot(predicted_year, aes(x = Year, y = FU_display, fill = residual_med)) 
 
 p
 ggsave("Mismatch.pdf", p, width = 14, height = 6)
+```
+
+```{r}
+library(brms)
+library(posterior)
+library(ggplot2)
+library(bayesplot)
+
+fit <- tat_zika_model_3
+summ <- posterior::summarise_draws(as_draws(fit), "rhat", "ess_bulk", "ess_tail")
+
+p_rhat <- ggplot(summ, aes(x = rhat)) +
+  geom_histogram(bins = 40) +
+  geom_vline(xintercept = 1.01, linetype = 2) +
+  geom_vline(xintercept = 1.05, linetype = 2) +
+  labs(title = "R-hat distribution (TAT model)",
+       x = "R-hat", y = "Count") +
+  theme_minimal(base_size = 20)
+
+p_ess <- ggplot(summ, aes(x = ess_bulk)) +
+  geom_histogram(bins = 40) +
+  labs(title = "Bulk ESS distribution (TAT model)",
+       x = "ESS (bulk)", y = "Count") +
+  theme_minimal(base_size = 20)
+
+worst <- summ %>%
+  arrange(desc(rhat)) %>%
+  slice(1:6) %>%
+  pull(variable)
+
+draws_arr <- posterior::as_draws_array(fit)
+p_trace <- bayesplot::mcmc_trace(draws_arr, pars = worst, n_warmup = 0) +
+  bayesplot::theme_default(base_size = 20)
+fig_diag <- (
+  (p_rhat | p_ess) +
+    plot_layout(guides = "collect")   
+) /
+  p_trace +
+  plot_layout(heights = c(1, 1.25)) +   
+  plot_annotation(tag_levels = "A")       
+
+fig_diag
+ggsave("fig_convergence_diag.pdf", fig_diag, width = 14, height = 10)
 ```
